@@ -1,0 +1,19 @@
+# BackroomPlugin Configuration
+
+# World boundaries
+room_min: -5000
+room_max: 5000
+
+# Level settings
+floor_height: 5
+max_levels: 3
+wall_height: 4
+
+# Gameplay settings
+exit_chance: 0.005  # Chance of finding an exit in a chunk
+difficulty_scaling: 1.0  # How much more difficult each level gets
+
+# Special effects
+enable_light_flicker: true
+enable_ambient_sounds: true
+enable_fog_effect: true

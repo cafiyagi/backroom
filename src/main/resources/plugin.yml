@@ -1,0 +1,20 @@
+name: BagRoomPlugin
+version: 1.0.0
+main: backroom.backroom.BagRoomPlugin
+api-version: 1.16
+commands:
+  backroom:
+    description: バックルームにテレポートする
+    usage: /backroom [level]
+    permission: backroom.teleport
+  exitbackroom:
+    description: バックルームから強制退出する（管理者用）
+    usage: /exitbackroom [player]
+    permission: backroom.admin.exit
+permissions:
+  backroom.teleport:
+    description: プレイヤーがバックルームに入ることを許可する
+    default: true
+  backroom.admin.exit:
+    description: 管理者がプレイヤーをバックルームから強制的に退出させることを許可する
+    default: op
