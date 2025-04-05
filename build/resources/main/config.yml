@@ -1,19 +1,19 @@
-# BackroomPlugin Configuration
+# バックルームプラグイン設定
 
-# World boundaries
+# ワールド境界
 room_min: -5000
 room_max: 5000
 
-# Level settings
+# レベル設定
 floor_height: 5
 max_levels: 3
 wall_height: 4
 
-# Gameplay settings
-exit_chance: 0.005  # Chance of finding an exit in a chunk
-difficulty_scaling: 1.0  # How much more difficult each level gets
+# ゲームプレイ設定
+exit_chance: 0.002  # チャンク内で出口を見つける確率
+difficulty_scaling: 1.0  # 各レベルの難易度スケーリング
 
-# Special effects
+# 特殊効果
 enable_light_flicker: true
 enable_ambient_sounds: true
 enable_fog_effect: true

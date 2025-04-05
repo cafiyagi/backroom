@@ -5,11 +5,11 @@ api-version: 1.16
 commands:
   backroom:
     description: バックルームにテレポートする
-    usage: /backroom [level]
+    usage: /backroom [レベル]
     permission: backroom.teleport
   exitbackroom:
     description: バックルームから強制退出する（管理者用）
-    usage: /exitbackroom [player]
+    usage: /exitbackroom [プレイヤー名]
     permission: backroom.admin.exit
 permissions:
   backroom.teleport:

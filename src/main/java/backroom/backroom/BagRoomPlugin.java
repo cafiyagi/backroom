@@ -11,11 +11,12 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.generator.BlockPopulator;
 import org.bukkit.generator.ChunkGenerator;
 import org.bukkit.generator.WorldInfo;
-import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
@@ -27,66 +28,67 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class BagRoomPlugin extends JavaPlugin implements Listener {
 
-    // Configuration
+    // 設定項目
     private int ROOM_MIN = -5000;
     private int ROOM_MAX = 5000;
-    private int FLOOR_HEIGHT = 5; // Height between floors
-    private int MAX_LEVELS = 3; // Number of backroom levels
-    private int WALL_HEIGHT = 4; // Height of walls
-    private double EXIT_CHANCE = 0.005; // Chance of finding an exit in any chunk
+    private int FLOOR_HEIGHT = 5; // 階層間の高さ
+    private int MAX_LEVELS = 3; // バックルームのレベル数
+    private int WALL_HEIGHT = 4; // 壁の高さ
+    private double EXIT_CHANCE = 0.002; // 出口を見つける確率（0.005から0.002に減少）
     private boolean enableLightFlicker = true;
     private boolean enableAmbientSounds = true;
     private boolean enableFogEffect = true;
-    private double difficultyScaling = 1.0; // Scales how difficult higher levels are
+    private double difficultyScaling = 1.0; // 難易度スケーリング
 
-    // World data
+    // 世界データ
     private final Map<String, Integer> playerLevels = new ConcurrentHashMap<>();
     private final Map<UUID, Long> lastFlickerTime = new ConcurrentHashMap<>();
     private final Map<UUID, Integer> sanityLevels = new ConcurrentHashMap<>();
     private final Set<Location> exitLocations = Collections.newSetFromMap(new ConcurrentHashMap<>());
+    private final Map<UUID, Double> playerDistanceTraveled = new ConcurrentHashMap<>(); // プレイヤーの移動距離を追跡
 
-    // Random generation
+    // ランダム生成用
     private final Random random = new Random();
 
-    // Materials for different levels
+    // 各レベルの素材
     private final Material[][] LEVEL_MATERIALS = {
-            // Level 0 - Classic yellow backrooms
+            // レベル0 - 古典的な黄色のバックルーム
             {
-                    Material.YELLOW_CONCRETE, // Floor
-                    Material.YELLOW_TERRACOTTA, // Walls
-                    Material.YELLOW_STAINED_GLASS, // Ceiling
-                    Material.GLOWSTONE // Lights
+                    Material.YELLOW_CONCRETE, // 床
+                    Material.YELLOW_TERRACOTTA, // 壁
+                    Material.YELLOW_STAINED_GLASS, // 天井
+                    Material.GLOWSTONE // 照明
             },
-            // Level 1 - Darker, more damaged
+            // レベル1 - より暗く、損傷が激しい
             {
-                    Material.YELLOW_TERRACOTTA, // Floor
-                    Material.YELLOW_CONCRETE, // Walls
-                    Material.YELLOW_WOOL, // Ceiling
-                    Material.REDSTONE_LAMP // Lights (can flicker)
+                    Material.YELLOW_TERRACOTTA, // 床
+                    Material.YELLOW_CONCRETE, // 壁
+                    Material.YELLOW_WOOL, // 天井
+                    Material.REDSTONE_LAMP // 照明（点滅可能）
             },
-            // Level 2 - Abandoned and overgrown
+            // レベル2 - 放棄され、植物が生えている
             {
-                    Material.YELLOW_CONCRETE_POWDER, // Floor
-                    Material.STRIPPED_BIRCH_WOOD, // Walls
-                    Material.BIRCH_PLANKS, // Ceiling
-                    Material.LANTERN // Lights (sparse)
+                    Material.YELLOW_CONCRETE_POWDER, // 床
+                    Material.STRIPPED_BIRCH_WOOD, // 壁
+                    Material.BIRCH_PLANKS, // 天井
+                    Material.LANTERN // 照明（まばら）
             }
     };
 
     @Override
     public void onEnable() {
-        // Save default config
+        // デフォルト設定を保存
         saveDefaultConfig();
         loadConfig();
 
-        // Register events
+        // イベントを登録
         getServer().getPluginManager().registerEvents(this, this);
 
-        // Register commands
+        // コマンドを登録
         getCommand("backroom").setExecutor(new BackroomCommand());
         getCommand("exitbackroom").setExecutor(new ExitBackroomCommand());
 
-        // Initialize worlds if they don't exist
+        // ワールドが存在しない場合は初期化
         for (int level = 0; level < MAX_LEVELS; level++) {
             String worldName = "backroom_level_" + level;
             if (Bukkit.getWorld(worldName) == null) {
@@ -94,7 +96,7 @@ public class BagRoomPlugin extends JavaPlugin implements Listener {
             }
         }
 
-        // Schedule ambient tasks
+        // 環境タスクを開始
         if (enableLightFlicker) {
             startLightFlickerTask();
         }
@@ -107,20 +109,20 @@ public class BagRoomPlugin extends JavaPlugin implements Listener {
             startFogEffectTask();
         }
 
-        getLogger().info("Backrooms plugin enabled. No-clipping into reality...");
+        getLogger().info("バックルームプラグインが有効化されました。現実からのノークリップを開始します...");
     }
 
     @Override
     public void onDisable() {
-        // Cancel all tasks
+        // すべてのタスクをキャンセル
         Bukkit.getScheduler().cancelTasks(this);
-        getLogger().info("Backrooms plugin disabled. Returned to reality.");
+        getLogger().info("バックルームプラグインが無効化されました。現実に戻りました。");
     }
 
     private void loadConfig() {
         FileConfiguration config = getConfig();
 
-        // Set defaults if not present
+        // デフォルト値が存在しない場合は設定
         config.addDefault("room_min", ROOM_MIN);
         config.addDefault("room_max", ROOM_MAX);
         config.addDefault("floor_height", FLOOR_HEIGHT);
@@ -134,7 +136,7 @@ public class BagRoomPlugin extends JavaPlugin implements Listener {
         config.options().copyDefaults(true);
         saveConfig();
 
-        // Load values
+        // 値をロード
         ROOM_MIN = config.getInt("room_min");
         ROOM_MAX = config.getInt("room_max");
         FLOOR_HEIGHT = config.getInt("floor_height");
@@ -160,7 +162,7 @@ public class BagRoomPlugin extends JavaPlugin implements Listener {
         world.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, false);
         world.setGameRule(GameRule.DO_WEATHER_CYCLE, false);
         world.setGameRule(GameRule.DO_MOB_SPAWNING, false);
-        world.setTime(18000); // Perpetual night for atmosphere
+        world.setTime(18000); // 常に夜間（雰囲気のため）
 
         return world;
     }
@@ -171,13 +173,13 @@ public class BagRoomPlugin extends JavaPlugin implements Listener {
             public void run() {
                 for (Player player : Bukkit.getOnlinePlayers()) {
                     if (isInBackroom(player)) {
-                        // Only flicker if enough time has passed
+                        // 十分な時間が経過した場合のみ点滅
                         UUID uuid = player.getUniqueId();
                         long currentTime = System.currentTimeMillis();
                         if (!lastFlickerTime.containsKey(uuid) ||
-                                currentTime - lastFlickerTime.get(uuid) > 30000) { // 30 seconds between flickers
+                                currentTime - lastFlickerTime.get(uuid) > 30000) { // 点滅間隔30秒
 
-                            if (random.nextDouble() < 0.2) { // 20% chance to flicker
+                            if (random.nextDouble() < 0.2) { // 20%の確率で点滅
                                 flickerLightsAroundPlayer(player);
                                 lastFlickerTime.put(uuid, currentTime);
                             }
@@ -185,7 +187,7 @@ public class BagRoomPlugin extends JavaPlugin implements Listener {
                     }
                 }
             }
-        }.runTaskTimer(this, 100, 100); // Check every 5 seconds
+        }.runTaskTimer(this, 100, 100); // 5秒ごとにチェック
     }
 
     private void startAmbientSoundTask() {
@@ -194,16 +196,16 @@ public class BagRoomPlugin extends JavaPlugin implements Listener {
             public void run() {
                 for (Player player : Bukkit.getOnlinePlayers()) {
                     if (isInBackroom(player)) {
-                        // Play ambient sounds
+                        // 環境音を再生
                         int level = getPlayerLevel(player);
 
                         switch (level) {
                             case 0:
-                                // Fluorescent light buzz
+                                // 蛍光灯のブーンという音
                                 player.playSound(player.getLocation(), Sound.BLOCK_BEACON_AMBIENT, 0.2f, 1.0f);
                                 break;
                             case 1:
-                                // Distant footsteps and machinery
+                                // 遠くの足音と機械音
                                 if (random.nextBoolean()) {
                                     player.playSound(player.getLocation(), Sound.BLOCK_BEACON_AMBIENT, 0.2f, 0.8f);
                                 } else {
@@ -211,7 +213,7 @@ public class BagRoomPlugin extends JavaPlugin implements Listener {
                                 }
                                 break;
                             case 2:
-                                // Water drips and creaks
+                                // 水滴と軋み音
                                 if (random.nextBoolean()) {
                                     player.playSound(player.getLocation(), Sound.BLOCK_LADDER_STEP, 0.1f, 0.5f);
                                 } else {
@@ -222,7 +224,7 @@ public class BagRoomPlugin extends JavaPlugin implements Listener {
                     }
                 }
             }
-        }.runTaskTimer(this, 60, 160); // Every 8 seconds
+        }.runTaskTimer(this, 60, 160); // 8秒ごと
     }
 
     private void startFogEffectTask() {
@@ -231,14 +233,14 @@ public class BagRoomPlugin extends JavaPlugin implements Listener {
             public void run() {
                 for (Player player : Bukkit.getOnlinePlayers()) {
                     if (isInBackroom(player)) {
-                        // Apply fog effect (blindness with very short duration)
+                        // 霧効果（非常に短い時間の盲目）を適用
                         int level = getPlayerLevel(player);
                         if (random.nextDouble() < 0.1 * (level + 1)) {
                             player.addPotionEffect(new PotionEffect(
-                                    PotionEffectType.BLINDNESS, 20, 0, false, false));
+                                    PotionEffectType.BLINDNESS, 40, 0, false, false));
                         }
 
-                        // Apply nausea on deeper levels
+                        // 深いレベルでは吐き気も
                         if (level > 0 && random.nextDouble() < 0.05 * level) {
                             player.addPotionEffect(new PotionEffect(
                                     PotionEffectType.NAUSEA, 100, 0, false, false));
@@ -246,7 +248,7 @@ public class BagRoomPlugin extends JavaPlugin implements Listener {
                     }
                 }
             }
-        }.runTaskTimer(this, 100, 400); // Every 20 seconds
+        }.runTaskTimer(this, 100, 400); // 20秒ごと
     }
 
     private void flickerLightsAroundPlayer(Player player) {
@@ -254,11 +256,11 @@ public class BagRoomPlugin extends JavaPlugin implements Listener {
         Location loc = player.getLocation();
         World world = player.getWorld();
 
-        // Get player's current level
+        // プレイヤーの現在のレベルを取得
         int level = getPlayerLevel(player);
         Material lightMaterial = LEVEL_MATERIALS[level][3];
 
-        // Find light blocks in radius
+        // 半径内の照明ブロックを検索
         List<Block> lightBlocks = new ArrayList<>();
         for (int x = -radius; x <= radius; x++) {
             for (int y = -radius; y <= radius; y++) {
@@ -275,40 +277,40 @@ public class BagRoomPlugin extends JavaPlugin implements Listener {
             }
         }
 
-        // Flicker effect - turn off and on
+        // 点滅効果 - オフにしてからオンに
         if (!lightBlocks.isEmpty()) {
-            // Send message to player
-            player.sendMessage(ChatColor.DARK_RED + "The lights flicker momentarily...");
+            // プレイヤーにメッセージを送信
+            player.sendMessage(ChatColor.DARK_RED + "【警告】照明システム一時的障害発生。");
 
             new BukkitRunnable() {
                 @Override
                 public void run() {
-                    // Turn lights off
+                    // ライトをオフに
                     for (Block light : lightBlocks) {
                         player.sendBlockChange(light.getLocation(), Material.AIR.createBlockData());
                     }
 
-                    // Play sound
+                    // 音を再生
                     player.playSound(player.getLocation(), Sound.BLOCK_GLASS_BREAK, 0.3f, 1.5f);
 
-                    // Darkness effect
+                    // 暗闇効果
                     player.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 40, 0, false, false));
 
-                    // Schedule turn back on
+                    // オンに戻すスケジュール
                     new BukkitRunnable() {
                         @Override
                         public void run() {
-                            // Turn lights back on
+                            // ライトを元に戻す
                             for (Block light : lightBlocks) {
                                 player.sendBlockChange(light.getLocation(), light.getBlockData());
                             }
 
-                            // Play sound
+                            // 音を再生
                             player.playSound(player.getLocation(), Sound.BLOCK_BEACON_ACTIVATE, 0.2f, 1.2f);
                         }
-                    }.runTaskLater(BagRoomPlugin.this, 15); // 0.75 seconds later
+                    }.runTaskLater(BagRoomPlugin.this, 15); // 0.75秒後
                 }
-            }.runTaskLater(this, 5); // 0.25 seconds delay
+            }.runTaskLater(this, 5); // 0.25秒遅延
         }
     }
 
@@ -331,110 +333,200 @@ public class BagRoomPlugin extends JavaPlugin implements Listener {
     }
 
     @EventHandler
+    public void onPlayerJoin(PlayerJoinEvent event) {
+        // プレイヤーがサーバーに参加したときに距離カウンターをリセット
+        playerDistanceTraveled.put(event.getPlayer().getUniqueId(), 0.0);
+    }
+
+    @EventHandler
+    public void onPlayerQuit(PlayerQuitEvent event) {
+        // プレイヤーがサーバーを離れたとき、カウンターを削除
+        playerDistanceTraveled.remove(event.getPlayer().getUniqueId());
+    }
+
+    @EventHandler
     public void onPlayerMove(PlayerMoveEvent event) {
         Player player = event.getPlayer();
-        if (!isInBackroom(player)) return;
-
+        Location from = event.getFrom();
         Location to = event.getTo();
-        int level = getPlayerLevel(player);
-        World world = player.getWorld();
 
-        // Check if player is outside boundaries
-        if (to.getBlockX() < ROOM_MIN || to.getBlockX() > ROOM_MAX ||
-                to.getBlockZ() < ROOM_MIN || to.getBlockZ() > ROOM_MAX) {
+        if (to == null) return;
 
-            // Teleport to a random location within boundaries
-            int randomX = random.nextInt(ROOM_MAX - ROOM_MIN) + ROOM_MIN;
-            int randomZ = random.nextInt(ROOM_MAX - ROOM_MIN) + ROOM_MIN;
-            int y = 65 + (level * FLOOR_HEIGHT); // Level-specific height
+        // バックルーム内の移動処理
+        if (isInBackroom(player)) {
+            int level = getPlayerLevel(player);
+            World world = player.getWorld();
 
-            Location newLoc = new Location(world, randomX + 0.5, y, randomZ + 0.5);
-            player.teleport(newLoc);
-            player.sendMessage(ChatColor.RED + "You can't escape the Backrooms that easily...");
-            return;
-        }
+            // 境界外にいるかチェック
+            if (to.getBlockX() < ROOM_MIN || to.getBlockX() > ROOM_MAX ||
+                    to.getBlockZ() < ROOM_MIN || to.getBlockZ() > ROOM_MAX) {
 
-        // Check for exit (emerald block) - store in memory for better performance
-        Block block = world.getBlockAt(to.getBlockX(), to.getBlockY() - 1, to.getBlockZ());
+                // 範囲内のランダムな場所にテレポート
+                int randomX = random.nextInt(ROOM_MAX - ROOM_MIN) + ROOM_MIN;
+                int randomZ = random.nextInt(ROOM_MAX - ROOM_MIN) + ROOM_MIN;
+                int y = 65 + (level * FLOOR_HEIGHT); // レベル固有の高さ
 
-        // Cache exit locations to avoid repeated checks
-        Location blockLoc = block.getLocation();
-        if (exitLocations.contains(blockLoc)) {
-            handleExit(player, level);
-            return;
-        }
-
-        if (block.getType() == Material.EMERALD_BLOCK) {
-            exitLocations.add(blockLoc);
-            handleExit(player, level);
-        }
-
-        // Special locations: Stairs down to the next level (if not at max depth)
-        if (level < MAX_LEVELS - 1 && block.getType() == Material.MOSSY_COBBLESTONE) {
-            int newLevel = level + 1;
-
-            // Create warning
-            player.sendMessage(ChatColor.DARK_RED + "You feel a strange pulling sensation...");
-            player.sendMessage(ChatColor.RED + "Something tells you not to go any deeper...");
-
-            // Teleport to the next level down
-            World nextWorld = Bukkit.getWorld("backroom_level_" + newLevel);
-            if (nextWorld == null) {
-                nextWorld = createBackroomWorld(newLevel);
+                Location newLoc = new Location(world, randomX + 0.5, y, randomZ + 0.5);
+                player.teleport(newLoc);
+                player.sendMessage(ChatColor.RED + "【エラー】境界外移動検知。中央領域へ転送します。");
+                return;
             }
 
-            // Random location in the next level
-            int x = random.nextInt(100) - 50;
-            int z = random.nextInt(100) - 50;
-            int y = 65 + (newLevel * FLOOR_HEIGHT);
+            // 出口（エメラルドブロック）のチェック - パフォーマンス向上のためメモリに保存
+            Block block = world.getBlockAt(to.getBlockX(), to.getBlockY() - 1, to.getBlockZ());
 
-            // Ensure there's air at the destination
-            Location destination = new Location(nextWorld, x, y, z);
-            player.teleport(destination);
+            // 出口の位置をキャッシュしてチェックを繰り返さないようにする
+            Location blockLoc = block.getLocation();
+            if (exitLocations.contains(blockLoc)) {
+                handleExit(player, level);
+                return;
+            }
 
-            // Apply effects
-            player.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 60, 0));
-            player.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA, 100, 0));
-            player.playSound(player.getLocation(), Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 0.5f);
+            if (block.getType() == Material.EMERALD_BLOCK) {
+                exitLocations.add(blockLoc);
+                handleExit(player, level);
+            }
 
-            // Message
-            player.sendMessage(ChatColor.DARK_RED + "You've descended to Backrooms Level " + newLevel);
-            player.sendMessage(ChatColor.RED + "The air feels thicker here...");
+            // 特殊な場所：次のレベルへの階段（最大深度でない場合）
+            if (level < MAX_LEVELS - 1 && block.getType() == Material.MOSSY_COBBLESTONE) {
+                int newLevel = level + 1;
 
-            // Update player's tracked level
-            playerLevels.put(player.getName(), newLevel);
+                // 警告を表示
+                player.sendMessage(ChatColor.DARK_RED + "【警告】異常な引力感知。");
+                player.sendMessage(ChatColor.RED + "【システム】これ以上深く進むことは推奨されません。");
+
+                // 次のレベルにテレポート
+                World nextWorld = Bukkit.getWorld("backroom_level_" + newLevel);
+                if (nextWorld == null) {
+                    nextWorld = createBackroomWorld(newLevel);
+                }
+
+                // 次のレベルのランダムな場所
+                int x = random.nextInt(100) - 50;
+                int z = random.nextInt(100) - 50;
+                int y = 65 + (newLevel * FLOOR_HEIGHT);
+
+                // 目的地に空気があることを確認
+                Location destination = new Location(nextWorld, x, y, z);
+                player.teleport(destination);
+
+                // 効果を適用
+                player.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 60, 0));
+                player.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA, 100, 0));
+                player.playSound(player.getLocation(), Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 0.5f);
+
+                // メッセージ
+                player.sendMessage(ChatColor.DARK_RED + "【位置情報】バックルームレベル " + newLevel + " に降下しました");
+                player.sendMessage(ChatColor.RED + "【環境センサー】空気密度が増加しています...");
+
+                // プレイヤーのレベルを更新
+                playerLevels.put(player.getName(), newLevel);
+            }
+        } else {
+            // 通常世界での移動を追跡
+            UUID playerId = player.getUniqueId();
+
+            // XZ平面上の距離のみを計算（高さ変化を無視）
+            double dx = to.getX() - from.getX();
+            double dz = to.getZ() - from.getZ();
+            double distance = Math.sqrt(dx*dx + dz*dz);
+
+            // すべての移動をカウント（距離制限を撤廃）
+            double totalDistance = playerDistanceTraveled.getOrDefault(playerId, 0.0) + distance;
+            playerDistanceTraveled.put(playerId, totalDistance);
+
+            // 警告メッセージを10ブロクから表示
+            if (totalDistance >= 10.0 && totalDistance < 11.0) {
+                player.sendMessage(ChatColor.GRAY + "【注意】現実の不安定性が増加しています... (" + String.format("%.1f", totalDistance) + "/15.0)");
+            }
+
+            // 15ブロック歩いたらバックルームに送る（20→15に変更）
+            if (totalDistance >= 15.0) {
+                // カウンターをリセット
+                playerDistanceTraveled.put(playerId, 0.0);
+
+                // プレイヤーがオペレーターでない場合のみ（オプション）
+                if (!player.isOp()) {
+                    // 88%の確率でバックルームに送る
+                    if (random.nextDouble() < 0.88) {
+                        // レベル0のバックルームに送る
+                        teleportToBackroom(player, 0);
+
+                        player.sendMessage(ChatColor.DARK_RED + "【異常事象発生】空間歪曲検知。現実層からのノークリップが発生しました。");
+                        player.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 60, 0));
+                        player.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA, 80, 0));
+                    }
+                }
+            }
+        }
+    }
+
+    private void teleportToBackroom(Player player, int level) {
+        // バックルームのワールドを取得または作成
+        String worldName = "backroom_level_" + level;
+        World backroomWorld = Bukkit.getWorld(worldName);
+        if (backroomWorld == null) {
+            backroomWorld = createBackroomWorld(level);
+        }
+
+        // ランダムな場所にテレポート
+        int x = random.nextInt(100) - 50; // 初期スポーン用の小さな範囲
+        int z = random.nextInt(100) - 50;
+        int y = 65 + (level * FLOOR_HEIGHT); // レベル固有の高さ
+
+        Location spawnLoc = new Location(backroomWorld, x + 0.5, y, z + 0.5);
+        player.teleport(spawnLoc);
+
+        // プレイヤーレベルを追跡
+        playerLevels.put(player.getName(), level);
+
+        // 効果
+        player.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 60, 0));
+        player.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA, 80, 0));
+        player.playSound(player.getLocation(), Sound.ENTITY_ELDER_GUARDIAN_AMBIENT, 0.5f, 0.5f);
+
+        // メッセージ
+        player.sendMessage(ChatColor.YELLOW + "【転送完了】あなたは現実からノークリップしました...");
+        if (level == 0) {
+            player.sendMessage(ChatColor.GOLD + "【システムメッセージ】脱出するにはエメラルドブロックを見つけてください。");
+        } else {
+            player.sendMessage(ChatColor.GOLD + "【システムメッセージ】上層または下層への経路を発見してください。");
+            player.sendMessage(ChatColor.RED + "【位置情報】現在レベル " + level + " に滞在中。");
         }
     }
 
     private void handleExit(Player player, int level) {
-        // Different outcomes based on level
+        // レベルに基づいて異なる結果
         switch (level) {
             case 0:
-                // Level 0: Return to the main world
+                // レベル0：メインワールドに戻る
                 World mainWorld = Bukkit.getWorld("world");
                 if (mainWorld == null) mainWorld = Bukkit.getWorlds().get(0);
 
-                player.sendMessage(ChatColor.GREEN + "You found an exit from the Backrooms!");
+                player.sendMessage(ChatColor.GREEN + "【異常検知】境界領域に亀裂が発生。現実層へのリンクを確立中...");
                 player.teleport(mainWorld.getSpawnLocation());
 
-                // Clear any effects
+                // 効果をクリア
                 for (PotionEffect effect : player.getActivePotionEffects()) {
                     player.removePotionEffect(effect.getType());
                 }
 
-                // Give reward
+                // 報酬
                 player.playSound(player.getLocation(), Sound.UI_TOAST_CHALLENGE_COMPLETE, 1.0f, 1.0f);
-                player.sendMessage(ChatColor.GOLD + "You escaped the Backrooms and returned to reality!");
+                player.sendMessage(ChatColor.GOLD + "【転送完了】バックルーム層との接続が切断されました。現実への再同期を確認。");
+
+                // 距離カウンターをリセット
+                playerDistanceTraveled.put(player.getUniqueId(), 0.0);
                 break;
 
             default:
-                // Deeper levels: Go up one level
+                // 深いレベル：1レベル上に移動
                 int newLevel = level - 1;
                 World upperWorld = Bukkit.getWorld("backroom_level_" + newLevel);
 
-                player.sendMessage(ChatColor.YELLOW + "You found a way up...");
+                player.sendMessage(ChatColor.YELLOW + "【発見】上層への経路を確認しました...");
 
-                // Random location in upper level
+                // 上層のランダムな場所
                 int x = random.nextInt(200) - 100;
                 int z = random.nextInt(200) - 100;
                 int y = 65 + (newLevel * FLOOR_HEIGHT);
@@ -442,13 +534,13 @@ public class BagRoomPlugin extends JavaPlugin implements Listener {
                 Location destination = new Location(upperWorld, x, y, z);
                 player.teleport(destination);
 
-                // Effects
+                // 効果
                 player.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 30, 0));
                 player.playSound(player.getLocation(), Sound.BLOCK_PORTAL_TRAVEL, 0.5f, 1.0f);
 
-                player.sendMessage(ChatColor.YELLOW + "You've ascended to Backrooms Level " + newLevel);
+                player.sendMessage(ChatColor.YELLOW + "【位置情報】バックルームレベル " + newLevel + " に上昇しました");
 
-                // Update player's tracked level
+                // プレイヤーの追跡レベルを更新
                 playerLevels.put(player.getName(), newLevel);
                 break;
         }
@@ -461,7 +553,7 @@ public class BagRoomPlugin extends JavaPlugin implements Listener {
         Player player = (Player) event.getEntity();
         if (!isInBackroom(player)) return;
 
-        // No fall damage in backrooms
+        // バックルームでは落下ダメージなし
         if (event.getCause() == EntityDamageEvent.DamageCause.FALL) {
             event.setCancelled(true);
         }
@@ -472,131 +564,103 @@ public class BagRoomPlugin extends JavaPlugin implements Listener {
         Player player = event.getPlayer();
         if (!isInBackroom(player)) return;
 
-        // Prevent block breaking unless in creative mode
+        // クリエイティブモード以外ではブロック破壊を防止
         if (player.getGameMode() != GameMode.CREATIVE) {
             event.setCancelled(true);
-            player.sendMessage(ChatColor.RED + "You cannot modify the Backrooms...");
+            player.sendMessage(ChatColor.RED + "【エラー】バックルーム環境の改変は許可されていません。");
         }
     }
 
-    // Command to enter the backrooms
+    // バックルームに入るコマンド
     private class BackroomCommand implements CommandExecutor {
         @Override
         public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
             if (!(sender instanceof Player)) {
-                sender.sendMessage("This command can only be used by players");
+                sender.sendMessage("このコマンドはプレイヤーのみ使用可能です");
                 return true;
             }
 
             Player player = (Player) sender;
 
-            // Parse level argument if provided
+            // レベル引数が提供されている場合は解析
             int level = 0;
             if (args.length > 0) {
                 try {
                     level = Integer.parseInt(args[0]);
                     if (level < 0 || level >= MAX_LEVELS) {
-                        player.sendMessage(ChatColor.RED + "Invalid level. Must be between 0 and " + (MAX_LEVELS - 1));
+                        player.sendMessage(ChatColor.RED + "【エラー】無効なレベル。0から" + (MAX_LEVELS - 1) + "の間でなければなりません");
                         return true;
                     }
                 } catch (NumberFormatException e) {
-                    player.sendMessage(ChatColor.RED + "Invalid level number");
+                    player.sendMessage(ChatColor.RED + "【エラー】無効なレベル番号");
                     return true;
                 }
             }
 
-            // Get or create world
-            String worldName = "backroom_level_" + level;
-            World backroomWorld = Bukkit.getWorld(worldName);
-            if (backroomWorld == null) {
-                backroomWorld = createBackroomWorld(level);
-            }
-
-            // Teleport player to a random location
-            int x = random.nextInt(100) - 50; // Small range for initial spawn
-            int z = random.nextInt(100) - 50;
-            int y = 65 + (level * FLOOR_HEIGHT); // Level-specific height
-
-            Location spawnLoc = new Location(backroomWorld, x + 0.5, y, z + 0.5);
-            player.teleport(spawnLoc);
-
-            // Track player level
-            playerLevels.put(player.getName(), level);
-
-            // Effects
-            player.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 60, 0));
-            player.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA, 80, 0));
-            player.playSound(player.getLocation(), Sound.ENTITY_ELDER_GUARDIAN_AMBIENT, 0.5f, 0.5f);
-
-            // Messages
-            player.sendMessage(ChatColor.YELLOW + "You've no-clipped into the Backrooms...");
-            if (level == 0) {
-                player.sendMessage(ChatColor.GOLD + "Find the emerald block to escape!");
-            } else {
-                player.sendMessage(ChatColor.GOLD + "Find a way up or down... if you dare.");
-                player.sendMessage(ChatColor.RED + "You are currently on Level " + level);
-            }
-
+            teleportToBackroom(player, level);
             return true;
         }
     }
 
-    // Command to force exit the backrooms (admin/emergency use)
+    // バックルームから強制退出するコマンド（管理者/緊急用）
     private class ExitBackroomCommand implements CommandExecutor {
         @Override
         public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
             if (!(sender instanceof Player)) {
-                sender.sendMessage("This command can only be used by players");
+                sender.sendMessage("このコマンドはプレイヤーのみ使用可能です");
                 return true;
             }
 
             Player player = (Player) sender;
 
-            // Only allow ops to use this command
+            // オペレーターのみこのコマンドを使用可能
             if (!player.isOp()) {
-                player.sendMessage(ChatColor.RED + "You don't have permission to use this command");
+                player.sendMessage(ChatColor.RED + "【エラー】このコマンドを使用する権限がありません");
                 return true;
             }
 
             if (!isInBackroom(player)) {
-                player.sendMessage(ChatColor.RED + "You are not in the Backrooms");
+                player.sendMessage(ChatColor.RED + "【エラー】あなたはバックルームにいません");
                 return true;
             }
 
-            // Target player (self or another player)
+            // 対象プレイヤー（自分または他のプレイヤー）
             Player target = player;
             if (args.length > 0) {
                 target = Bukkit.getPlayer(args[0]);
                 if (target == null || !target.isOnline()) {
-                    player.sendMessage(ChatColor.RED + "Player not found or not online");
+                    player.sendMessage(ChatColor.RED + "【エラー】プレイヤーが見つからないか、オンラインではありません");
                     return true;
                 }
             }
 
-            // Teleport to main world
+            // メインワールドにテレポート
             World mainWorld = Bukkit.getWorld("world");
             if (mainWorld == null) mainWorld = Bukkit.getWorlds().get(0);
 
             target.teleport(mainWorld.getSpawnLocation());
 
-            // Clear effects
+            // 効果をクリア
             for (PotionEffect effect : target.getActivePotionEffects()) {
                 target.removePotionEffect(effect.getType());
             }
 
-            // Messages
+            // メッセージ
             if (target == player) {
-                player.sendMessage(ChatColor.GREEN + "You've been forcibly removed from the Backrooms");
+                player.sendMessage(ChatColor.GREEN + "【システム通知】あなたはバックルームから強制的に排除されました");
             } else {
-                player.sendMessage(ChatColor.GREEN + "You've removed " + target.getName() + " from the Backrooms");
-                target.sendMessage(ChatColor.GREEN + "You've been forcibly removed from the Backrooms by an admin");
+                player.sendMessage(ChatColor.GREEN + "【システム通知】" + target.getName() + "をバックルームから排除しました");
+                target.sendMessage(ChatColor.GREEN + "【システム通知】あなたは管理者によってバックルームから強制的に排除されました");
             }
+
+            // 距離カウンターをリセット
+            playerDistanceTraveled.put(target.getUniqueId(), 0.0);
 
             return true;
         }
     }
 
-    // Custom world generator for the Backrooms
+    // バックルーム用カスタムワールドジェネレータ
     private class BackroomGenerator extends ChunkGenerator {
         private final int level;
         private final SimplexOctaveGenerator noiseGenerator;
@@ -614,108 +678,108 @@ public class BagRoomPlugin extends JavaPlugin implements Listener {
             int baseY = 60 + (level * FLOOR_HEIGHT);
             int wallHeight = WALL_HEIGHT;
 
-            // Get materials for this level
+            // このレベルの素材を取得
             Material floorMaterial = LEVEL_MATERIALS[level][0];
             Material wallMaterial = LEVEL_MATERIALS[level][1];
             Material ceilingMaterial = LEVEL_MATERIALS[level][2];
             Material lightMaterial = LEVEL_MATERIALS[level][3];
 
-            // Use a deterministic random based on chunk coordinates
+            // チャンク座標に基づく決定論的ランダム
             long seed = (long) worldXStart * 341873911L + (long) worldZStart * 132897777L + level * 31;
             Random chunkRandom = new Random(seed);
 
-            // Generate base terrain
+            // 基本地形を生成
             for (int x = 0; x < 16; x++) {
                 for (int z = 0; z < 16; z++) {
                     int absX = worldXStart + x;
                     int absZ = worldZStart + z;
 
-                    // Floor and ceiling
+                    // 床と天井
                     chunkData.setBlock(x, baseY, z, floorMaterial);
                     chunkData.setBlock(x, baseY + wallHeight + 1, z, ceilingMaterial);
 
-                    // Add some floor variation in deeper levels
+                    // 深いレベルでの床のバリエーションを追加
                     if (level > 0 && chunkRandom.nextDouble() < 0.05 * level) {
-                        // Damaged floor
+                        // 損傷した床
                         if (chunkRandom.nextDouble() < 0.5) {
                             chunkData.setBlock(x, baseY, z, Material.YELLOW_CONCRETE_POWDER);
                         }
 
-                        // Wet floor
+                        // 湿った床
                         if (level == 2 && chunkRandom.nextDouble() < 0.03) {
                             chunkData.setBlock(x, baseY, z, Material.WATER);
                         }
                     }
 
-                    // Use noise to create a maze-like pattern
+                    // 迷路のようなパターンを作成するためにノイズを使用
                     double noise1 = noiseGenerator.noise(absX, absZ, 0.5, 0.5, true);
                     double noise2 = noiseGenerator.noise(absZ, absX, 0.5, 0.5, true);
 
-                    // Create walls based on noise
+                    // ノイズに基づいて壁を作成
                     boolean isWall = false;
 
-                    // More complex wall patterns based on level
+                    // レベルに基づくより複雑な壁パターン
                     switch (level) {
                         case 0:
-                            // Level 0: Classic grid pattern
+                            // レベル0：古典的なグリッドパターン
                             if (Math.abs(absX % 8) < 1 || Math.abs(absZ % 8) < 1) {
                                 isWall = true;
                             }
 
-                            // Add some gaps in walls
+                            // 壁に隙間を追加
                             if (isWall && chunkRandom.nextDouble() < 0.15) {
                                 isWall = false;
                             }
                             break;
 
                         case 1:
-                            // Level 1: More chaotic walls
+                            // レベル1：よりカオスな壁
                             if (Math.abs(absX % 7) < 1 || Math.abs(absZ % 7) < 1) {
                                 isWall = true;
                             }
 
-                            // Use noise to create more varied patterns
+                            // より多様なパターンを作成するためにノイズを使用
                             if (noise1 > 0.65 || noise2 > 0.65) {
                                 isWall = !isWall;
                             }
 
-                            // Random wall damage
+                            // ランダムな壁のダメージ
                             if (isWall && chunkRandom.nextDouble() < 0.3) {
                                 isWall = false;
                             }
                             break;
 
                         case 2:
-                            // Level 2: Heavily degraded structure
+                            // レベル2：ひどく劣化した構造
                             if (Math.abs(absX % 6) < 1 || Math.abs(absZ % 6) < 1) {
                                 isWall = true;
                             }
 
-                            // More noise influence
+                            // より多くのノイズの影響
                             if ((noise1 > 0.6 && noise2 > 0.3) || (noise2 > 0.6 && noise1 > 0.3)) {
                                 isWall = !isWall;
                             }
 
-                            // Random destruction
+                            // ランダムな破壊
                             if (isWall && chunkRandom.nextDouble() < 0.4) {
                                 isWall = false;
                             }
                             break;
                     }
 
-                    // Create walls
+                    // 壁を作成
                     if (isWall) {
                         for (int y = 1; y <= wallHeight; y++) {
                             chunkData.setBlock(x, baseY + y, z, wallMaterial);
                         }
                     } else {
-                        // Air in non-wall spaces
+                        // 壁以外の空間に空気
                         for (int y = 1; y <= wallHeight; y++) {
                             chunkData.setBlock(x, baseY + y, z, Material.AIR);
                         }
                     }
 
-                    // Ceiling lights in corridors (not in walls)
+                    // 廊下の天井照明（壁ではない場所）
                     if (!isWall && (
                             (level == 0 && (absX % 8 == 4 && absZ % 8 == 4)) ||
                                     (level == 1 && (absX % 7 == 3 && absZ % 7 == 3)) ||
@@ -724,28 +788,28 @@ public class BagRoomPlugin extends JavaPlugin implements Listener {
                         chunkData.setBlock(x, baseY + wallHeight + 1, z, lightMaterial);
                     }
 
-                    // Random exits (emerald blocks)
+                    // ランダムな出口（エメラルドブロック）
                     if (!isWall && chunkRandom.nextDouble() < EXIT_CHANCE / (level + 1)) {
                         chunkData.setBlock(x, baseY, z, Material.EMERALD_BLOCK);
                     }
 
-                    // Add stairs down (if not at max depth)
+                    // 下階への階段を追加（最大深度でない場合）
                     if (level < MAX_LEVELS - 1 && !isWall && chunkRandom.nextDouble() < EXIT_CHANCE / 3) {
                         chunkData.setBlock(x, baseY, z, Material.MOSSY_COBBLESTONE);
                     }
 
-                    // Level-specific decorations
+                    // レベル固有の装飾
                     if (!isWall) {
                         switch (level) {
                             case 1:
-                                // Occasional damaged lighting on the floor
+                                // 床の上の損傷した照明
                                 if (chunkRandom.nextDouble() < 0.005) {
                                     chunkData.setBlock(x, baseY + 1, z, Material.REDSTONE_LAMP);
                                 }
                                 break;
 
                             case 2:
-                                // Vegetation and decay
+                                // 植生と腐敗
                                 if (chunkRandom.nextDouble() < 0.01) {
                                     if (chunkRandom.nextBoolean()) {
                                         chunkData.setBlock(x, baseY + 1, z, Material.BROWN_MUSHROOM);
